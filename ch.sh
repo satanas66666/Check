@@ -5,7 +5,7 @@ clear
 # =========================
 # CONFIG
 # =========================
-ZIP_URL="https://raw.githubusercontent.com/satanas66666/vpn-manager/main/chido.zip"
+ZIP_URL="https://raw.githubusercontent.com/satanas66666/check/main/chido.zip"
 CARPETA_ETC="/etc/chido"
 TMP_DIR="/tmp/chido_install"
 
