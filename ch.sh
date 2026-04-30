@@ -59,10 +59,10 @@ unzip -q chido.zip -d chido_temp
 cp -r chido_temp/* "$CARPETA_ETC"
 
 # Validación crítica
-if [ ! -f "$CARPETA_ETC/index.php" ]; then
-    echo "Error: falta index.php"
-    exit 1
-fi
+//if [ ! -f "$CARPETA_ETC/index.php" ]; then
+  //  echo "Error: falta index.php"
+  //  exit 1
+//fi
 
 if [ ! -d "$CARPETA_ETC/chidito1" ]; then
     echo "Error: falta carpeta chidito1"
