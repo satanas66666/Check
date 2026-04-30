@@ -5,7 +5,7 @@ clear
 # =========================
 # CONFIG
 # =========================
-ZIP_URL="https://raw.githubusercontent.com/satanas66666/check/main/chido.zip"
+ZIP_URL="https://github.com/satanas66666/check/archive/refs/heads/main.zip"
 CARPETA_ETC="/etc/chido"
 TMP_DIR="/tmp/chido_install"
 
