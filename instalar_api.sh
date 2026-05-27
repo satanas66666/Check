@@ -2,31 +2,20 @@
 
 echo "🔥 Instalando API VPS PRO (CORREGIDO)..."
 
-# =========================
-# CONFIG
-# =========================
 RUTA="/etc/chido"
 PUERTO="8888"
 SERVICIO="api-vps"
 TOKEN="ULTRA_SECRET_TOKEN"
 
-# =========================
-# LIMPIAR
-# =========================
 systemctl stop $SERVICIO 2>/dev/null
 systemctl disable $SERVICIO 2>/dev/null
 pkill -f "php -S" 2>/dev/null
 
-# =========================
-# CREAR DIRECTORIOS
-# =========================
 mkdir -p $RUTA
 mkdir -p /etc/SSHPlus/blocked
 mkdir -p /etc/SSHPlus/limits
+mkdir -p /etc/SSHPlus/abuse
 
-# =========================
-# CREAR API (SIN ERRORES)
-# =========================
 cat > $RUTA/api.php <<'EOF'
 <?php
 
@@ -52,14 +41,21 @@ if (!isset($data['token']) || $data['token'] !== $TOKEN) {
     exit("No autorizado");
 }
 
-$user = preg_replace('/[^a-zA-Z0-9._-]/', '', $data['user'] ?? '');
-$pass  = $data['pass'] ?? '';
-$dias  = intval($data['dias'] ?? 0);
+$user   = preg_replace('/[^a-zA-Z0-9._-]/', '', $data['user'] ?? '');
+$pass   = $data['pass'] ?? '';
 $accion = $data['accion'] ?? '';
-$fecha = $data['fecha'] ?? '';
-// 🔥 NUEVO (OBLIGATORIO para temporales)
+$fecha  = $data['fecha'] ?? '';
+
 $tipo   = $data['tipo'] ?? 'normal';
 $tiempo = intval($data['tiempo'] ?? 0);
+
+/*
+ * FIX:
+ * El panel PHP manda "tiempo" para normal y temporal.
+ * La API antes solo leía "dias".
+ */
+$dias   = intval($data['dias'] ?? ($data['tiempo'] ?? 0));
+$limite = intval($data['limite'] ?? 0);
 
 function run($cmd){
     return shell_exec("sudo $cmd 2>&1");
@@ -73,77 +69,97 @@ switch ($accion) {
 
     case "crear":
 
-    run("id $user || useradd -M -s /bin/false $user");
+        run("id $user || useradd -M -s /bin/false $user");
 
-    if (!empty($pass)) {
-        run("echo " . escapeshellarg($user . ":" . $pass) . " | chpasswd");
-    }
-
-    // =========================
-    // 🔥 TEMPORAL (PRO LIMPIO)
-    // =========================
-    if (isset($tipo) && $tipo == "temporal" && $tiempo > 0) {
-
-        $expira = time() + ($tiempo * 60);
-
-        // crear archivo si no existe
-        if (!file_exists("/etc/vpn_temp_users")) {
-            file_put_contents("/etc/vpn_temp_users", "");
+        if (!empty($pass)) {
+            run("echo " . escapeshellarg($user . ":" . $pass) . " | chpasswd");
         }
 
-        // 🔥 evitar duplicados
-        $lines = file("/etc/vpn_temp_users");
-        $new = "";
+        if ($limite > 0) {
+            if (!file_exists("/etc/SSHPlus/limits")) {
+                mkdir("/etc/SSHPlus/limits", 0777, true);
+            }
+            file_put_contents("/etc/SSHPlus/limits/$user", $limite);
+        }
 
-        foreach ($lines as $line) {
-            if (strpos($line, $user . "|") !== 0) {
-                $new .= $line;
+        if ($tipo == "temporal" && $tiempo > 0) {
+
+            $expira = time() + ($tiempo * 60);
+
+            if (!file_exists("/etc/vpn_temp_users")) {
+                file_put_contents("/etc/vpn_temp_users", "");
+            }
+
+            $lines = file("/etc/vpn_temp_users");
+            $new = "";
+
+            foreach ($lines as $line) {
+                if (strpos($line, $user . "|") !== 0) {
+                    $new .= $line;
+                }
+            }
+
+            $new .= "$user|$expira\n";
+            file_put_contents("/etc/vpn_temp_users", $new);
+
+        } else {
+
+            if (!empty($fecha)) {
+
+                run("chage -E $fecha $user");
+
+            } elseif ($dias > 0) {
+
+                $exp = date("Y-m-d", strtotime("+$dias days"));
+                run("chage -E $exp $user");
             }
         }
 
-        // guardar actualizado
-        $new .= "$user|$expira\n";
-        file_put_contents("/etc/vpn_temp_users", $new);
-
-    } else {
-
-        // =========================
-        // 🟢 NORMAL (TU LÓGICA ORIGINAL)
-        // =========================
-        if (!empty($fecha)) {
-
-            run("chage -E $fecha $user");
-
-        } elseif ($dias > 0) {
-
-            if ($dias <= 0) $dias = 1;
-
-            $exp = date("Y-m-d", strtotime("+$dias days"));
-            run("chage -E $exp $user");
-        }
-    }
-
-break;
+    break;
 
     case "eliminar":
+
         run("pkill -KILL -u $user");
         run("killall -u $user");
         run("userdel -f $user");
+
         @unlink("/etc/SSHPlus/limits/$user");
         @unlink("/etc/SSHPlus/blocked/$user");
+        @unlink("/etc/SSHPlus/abuse/$user");
+
+        if (file_exists("/etc/vpn_temp_users")) {
+            $lines = file("/etc/vpn_temp_users");
+            $new = "";
+
+            foreach ($lines as $line) {
+                if (strpos($line, $user . "|") !== 0) {
+                    $new .= $line;
+                }
+            }
+
+            file_put_contents("/etc/vpn_temp_users", $new);
+        }
+
     break;
 
     case "bloquear":
+
         run("usermod -L $user");
         run("usermod -s /bin/false $user");
         run("pkill -KILL -u $user");
+        run("killall -u $user");
+
         file_put_contents("/etc/SSHPlus/blocked/$user", "blocked");
+
     break;
 
     case "desbloquear":
+
         run("usermod -U $user");
         run("usermod -s /bin/bash $user");
+
         @unlink("/etc/SSHPlus/blocked/$user");
+
     break;
 
     case "editar":
@@ -178,12 +194,21 @@ break;
             run("chage -E $fecha $user");
         }
 
+        if ($limite > 0) {
+            if (!file_exists("/etc/SSHPlus/limits")) {
+                mkdir("/etc/SSHPlus/limits", 0777, true);
+            }
+            file_put_contents("/etc/SSHPlus/limits/$user", $limite);
+        }
+
     break;
 
     case "reset":
+
         if (!empty($pass)) {
             run("echo " . escapeshellarg($user . ":" . $pass) . " | chpasswd");
         }
+
     break;
 
     case "limpiar_expirados":
@@ -222,6 +247,19 @@ break;
                 @unlink("/etc/SSHPlus/limits/$u");
                 @unlink("/etc/SSHPlus/blocked/$u");
                 @unlink("/etc/SSHPlus/abuse/$u");
+
+                if (file_exists("/etc/vpn_temp_users")) {
+                    $lines = file("/etc/vpn_temp_users");
+                    $new = "";
+
+                    foreach ($lines as $line) {
+                        if (strpos($line, $u . "|") !== 0) {
+                            $new .= $line;
+                        }
+                    }
+
+                    file_put_contents("/etc/vpn_temp_users", $new);
+                }
             }
         }
 
@@ -236,9 +274,6 @@ break;
 echo "OK";
 EOF
 
-# =========================
-# ROUTER
-# =========================
 cat > $RUTA/router.php <<'EOF'
 <?php
 $uri = urldecode(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
@@ -251,21 +286,12 @@ if ($uri === '/api.php') {
 return false;
 EOF
 
-# =========================
-# PERMISOS
-# =========================
 chmod -R 755 $RUTA
 
-# =========================
-# SUDO
-# =========================
 if ! grep -q "www-data ALL=(ALL) NOPASSWD: ALL" /etc/sudoers; then
     echo "www-data ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 fi
 
-# =========================
-# SERVICIO
-# =========================
 cat > /etc/systemd/system/$SERVICIO.service <<EOF
 [Unit]
 Description=API VPS PRO
@@ -281,17 +307,11 @@ User=root
 WantedBy=multi-user.target
 EOF
 
-# =========================
-# ACTIVAR
-# =========================
 systemctl daemon-reload
 systemctl enable $SERVICIO
 systemctl restart $SERVICIO
 
-# =========================
-# FIREWALL
-# =========================
-ufw allow $PUERTO 2>/dev/null
+ufw allow $PUERTO/tcp 2>/dev/null
 
 echo ""
 echo "✅ API VPS PRO INSTALADA CORRECTAMENTE"
